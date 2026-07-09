@@ -106,7 +106,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Update release contract
-        uses: mikefarah/yq@v4.47.2
+        uses: mikefarah/yq@v4.53.3
         with:
           cmd: >-
             yq -i
