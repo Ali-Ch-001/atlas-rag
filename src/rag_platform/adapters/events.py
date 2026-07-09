@@ -8,8 +8,7 @@ from typing import Any
 import orjson
 import structlog
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer  # type: ignore[import-untyped]
-from aiokafka.abc import AbstractTokenProvider  # type: ignore[import-untyped]
-from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
+from aws_msk_iam_sasl_signer import MSKAuthTokenProvider  # type: ignore[import-untyped]
 from sqlalchemy import select
 
 from rag_platform.config import Settings
@@ -19,13 +18,13 @@ from rag_platform.db.session import SessionFactory
 logger = structlog.get_logger(__name__)
 
 
-class MskIamTokenProvider(AbstractTokenProvider):
+class MskIamTokenProvider:
     def __init__(self, region: str) -> None:
         self.region = region
 
     async def token(self) -> str:
         token, _ = await asyncio.to_thread(MSKAuthTokenProvider.generate_auth_token, self.region)
-        return token
+        return str(token)
 
 
 def _kafka_auth(settings: Settings) -> dict[str, Any]:

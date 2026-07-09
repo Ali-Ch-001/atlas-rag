@@ -6,12 +6,12 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Computed,
     Date,
     DateTime,
-    Boolean,
-    ForeignKeyConstraint,
     Float,
+    ForeignKeyConstraint,
     Index,
     Integer,
     LargeBinary,

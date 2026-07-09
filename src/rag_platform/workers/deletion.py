@@ -24,7 +24,10 @@ async def delete_projections(payload: dict[str, object]) -> None:
     tenant_id = UUID(str(payload["tenant_id"]))
     document_id = UUID(str(payload["document_id"]))
     corpus_id = UUID(str(payload["corpus_id"]))
-    version_ids = [UUID(str(value)) for value in payload.get("version_ids", [])]  # type: ignore[union-attr]
+    raw_version_ids = payload.get("version_ids", [])
+    if not isinstance(raw_version_ids, list):
+        raise ValueError("Deletion event version_ids must be a list")
+    version_ids = [UUID(str(value)) for value in raw_version_ids]
     object_store = ObjectStore(settings)
     vectors = VectorStore(settings)
     cache = CacheStore(settings)
