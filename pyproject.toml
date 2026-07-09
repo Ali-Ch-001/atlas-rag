@@ -50,7 +50,7 @@ dev = [
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
   "pytest-asyncio>=1.1,<2",
-  "pytest-cov>=6.2,<7",
+  "pytest-cov>=6.2,<8",
   "ruff>=0.12,<1",
   "testcontainers[postgres,redis]>=4.12,<5",
   "types-aioboto3[s3]>=15.1,<16",
@@ -67,7 +67,7 @@ dev = [
   "mypy>=1.17,<2",
   "pytest>=8.4,<9",
   "pytest-asyncio>=1.1,<2",
-  "pytest-cov>=6.2,<7",
+  "pytest-cov>=6.2,<8",
   "ruff>=0.12,<1",
 ]
 
