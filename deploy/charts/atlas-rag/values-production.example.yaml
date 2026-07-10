@@ -93,6 +93,9 @@ frontend:
       alb.ingress.kubernetes.io/healthcheck-path: /
   env:
     NEXT_PUBLIC_API_URL: https://rag.example.com
+    NEXT_PUBLIC_AUTH0_DOMAIN: replace-with-auth0-domain
+    NEXT_PUBLIC_AUTH0_CLIENT_ID: replace-with-public-auth0-client-id
+    NEXT_PUBLIC_AUTH0_AUDIENCE: replace-with-auth0-audience
 
 ingestionWorker:
   image:
@@ -126,6 +129,8 @@ ingress:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: replace-with-acm-certificate-arn
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
   hosts:
     - host: rag.example.com
       paths:

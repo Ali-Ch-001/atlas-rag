@@ -64,6 +64,19 @@ jobs:
           test -n "$FRONTEND_REPOSITORY"
           echo "api=${REGISTRY}/${API_REPOSITORY}" >> "$GITHUB_OUTPUT"
           echo "frontend=${REGISTRY}/${FRONTEND_REPOSITORY}" >> "$GITHUB_OUTPUT"
+      - name: Validate frontend build contract
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_DEFAULT_CORPUS_ID: ${{ vars.NEXT_PUBLIC_DEFAULT_CORPUS_ID }}
+          NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          NEXT_PUBLIC_AUTH0_AUDIENCE: ${{ vars.NEXT_PUBLIC_AUTH0_AUDIENCE }}
+        run: |
+          test -n "$NEXT_PUBLIC_API_URL"
+          test -n "$NEXT_PUBLIC_DEFAULT_CORPUS_ID"
+          test -n "$NEXT_PUBLIC_AUTH0_DOMAIN"
+          test -n "$NEXT_PUBLIC_AUTH0_CLIENT_ID"
+          test -n "$NEXT_PUBLIC_AUTH0_AUDIENCE"
       - uses: docker/setup-buildx-action@v3
       - id: api
         name: Build and publish API image
@@ -82,7 +95,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: frontend
-          file: frontend/Dockerfile
+          file: deploy/docker/frontend.Dockerfile
           push: true
           provenance: mode=max
           sbom: true
@@ -90,6 +103,9 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
             NEXT_PUBLIC_DEFAULT_CORPUS_ID=${{ vars.NEXT_PUBLIC_DEFAULT_CORPUS_ID }}
+            NEXT_PUBLIC_AUTH0_DOMAIN=${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+            NEXT_PUBLIC_AUTH0_CLIENT_ID=${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+            NEXT_PUBLIC_AUTH0_AUDIENCE=${{ vars.NEXT_PUBLIC_AUTH0_AUDIENCE }}
           cache-from: type=gha,scope=release-frontend
           cache-to: type=gha,mode=max,scope=release-frontend
 

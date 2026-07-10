@@ -13,6 +13,7 @@ module "eks" {
     provider_key_arn = aws_kms_key.platform.arn
     resources        = ["secrets"]
   }
+  create_kms_key = false
 
   cloudwatch_log_group_kms_key_id        = aws_kms_key.platform.arn
   cloudwatch_log_group_retention_in_days = 90

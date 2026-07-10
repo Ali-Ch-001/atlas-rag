@@ -21,7 +21,7 @@ helm template atlas-rag deploy/charts/atlas-rag \
 
 `values-production.example.yaml` contains identifiers and replacement markers only, never credentials. Replace those markers from the Terraform `platform_contract`. External Secrets renders `DATABASE_URL` from the RDS-managed secret and copies provider values into `atlas-rag-runtime`.
 
-The frontend's `NEXT_PUBLIC_*` values are compiled into the image by Next.js. Build the production frontend with the same URL/corpus values used here; runtime environment variables do not rewrite an already-built client bundle.
+The frontend's `NEXT_PUBLIC_*` values are compiled into the image by Next.js. Build production with `deploy/docker/frontend.Dockerfile` and the same API, corpus, and public Auth0 values used here; runtime environment variables do not rewrite an already-built client bundle.
 
 ## Qdrant
 

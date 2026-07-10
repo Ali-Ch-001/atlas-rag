@@ -16,10 +16,15 @@ locals {
     var.tags,
   )
 
+  bucket_name_base = substr(
+    "${local.name}-${data.aws_caller_identity.current.account_id}-${var.aws_region}",
+    0,
+    52,
+  )
   bucket_names = {
-    quarantine = "${local.name}-${data.aws_caller_identity.current.account_id}-${var.aws_region}-quarantine"
-    clean      = "${local.name}-${data.aws_caller_identity.current.account_id}-${var.aws_region}-clean"
-    derived    = "${local.name}-${data.aws_caller_identity.current.account_id}-${var.aws_region}-derived"
+    quarantine = "${local.bucket_name_base}-quarantine"
+    clean      = "${local.bucket_name_base}-clean"
+    derived    = "${local.bucket_name_base}-derived"
   }
 
   secret_names = toset(["openai", "tavily", "auth0", "citation", "qdrant"])
