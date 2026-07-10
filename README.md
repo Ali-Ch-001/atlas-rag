@@ -14,6 +14,15 @@ Use the complete stack, adopt individual services, or use the architecture and c
 
 The design target is demanding by intention: **10,000,000+ PDFs and hundreds of millions of chunks without an unfiltered vector flood**.
 
+<p align="center">
+  <img src="public-img/Ask%20the%20corpus.png" width="48%" alt="Grounded chat with citations, source metadata, and token usage" />
+  <img src="public-img/Document%20inventory.png" width="48%" alt="Live document inventory showing real PDFs, processing states, and upload form" />
+</p>
+<p align="center">
+  <img src="public-img/Infrastructure%20%26%20SLOs.png" width="48%" alt="Live SLO dashboard with real P95 latency, cache hit rate, dependency status, and budget burn" />
+  <img src="public-img/Retrieval%20operations.png" width="48%" alt="Operations overview with live corpus metrics, throughput charts, and latency time series" />
+</p>
+
 ## Why Atlas RAG
 
 Most RAG examples stop after `embed -> vector search -> prompt`. That path is useful for a prototype, but it breaks down under large corpora, multi-tenancy, access control, document updates, deletion requirements, and production latency.
