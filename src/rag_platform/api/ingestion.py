@@ -33,15 +33,14 @@ async def ingestion_summary(
         )
     )
 
-    states = dict(
-        (
-            await session.execute(
-                select(DocumentVersion.state, func.count())
-                .where(DocumentVersion.tenant_id == auth.tenant_id)
-                .group_by(DocumentVersion.state)
-            )
-        ).all()
-    )
+    state_rows = (
+        await session.execute(
+            select(DocumentVersion.state, func.count())
+            .where(DocumentVersion.tenant_id == auth.tenant_id)
+            .group_by(DocumentVersion.state)
+        )
+    ).all()
+    states: dict[str, int] = {state: int(count) for state, count in state_rows}
 
     stage_counts_result = (
         await session.execute(

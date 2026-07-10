@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Clock3, FileSearch, Layers3, RefreshCw, ScanText, Split, UploadCloud } from "lucide-react";
 import type { IngestionSummary } from "@/lib/types";
 import { getOperationsData } from "@/lib/api";
-import { DemoBadge, EmptyState, MetricCard, PageHeader, SectionPanel, StatusBadge } from "@/components/ui";
+import { EmptyState, MetricCard, PageHeader, SectionPanel, StatusBadge } from "@/components/ui";
 
 function formatRate(total: number): string {
   if (total === 0) return "0/h";
