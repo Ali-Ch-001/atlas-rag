@@ -28,7 +28,16 @@ export function IngestionView() {
     }
   }
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const initialLoad = async () => {
+      setLoading(true);
+      try { setData((await getOperationsData()).ingestion); }
+      catch { setData(null); }
+      finally { setLoading(false); }
+    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- data fetching on mount
+    void initialLoad();
+  }, []);
 
   const totalQueue = data
     ? Object.values(data.queue_depth).reduce((sum, count) => sum + count, 0)
