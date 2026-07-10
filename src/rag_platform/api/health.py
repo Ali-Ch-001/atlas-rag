@@ -7,8 +7,9 @@ from sqlalchemy import Integer, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rag_platform.adapters.cache import CacheStore
+from rag_platform.adapters.object_store import ObjectStore
 from rag_platform.adapters.vector_store import VectorStore
-from rag_platform.api.dependencies import get_cache_store, get_vector_store
+from rag_platform.api.dependencies import get_cache_store, get_object_store, get_vector_store
 from rag_platform.db.models import Chunk, Document, DocumentVersion, RetrievalRequestLog
 from rag_platform.db.session import get_session
 from rag_platform.db.tenant import set_tenant_context
@@ -27,6 +28,7 @@ async def ready(
     session: AsyncSession = Depends(get_session),
     cache: CacheStore = Depends(get_cache_store),
     vectors: VectorStore = Depends(get_vector_store),
+    object_store: ObjectStore = Depends(get_object_store),
 ) -> dict[str, object]:
     checks: dict[str, object] = {}
     try:
@@ -44,16 +46,11 @@ async def ready(
     except Exception:
         checks["qdrant"] = "unreachable"
     try:
-        await object_store.get_object("not-a-real-key-check", "health-check")
-        checks["minio"] = "healthy"
-    except Exception as exc:
-        error = str(exc)
-        if any(code in error.lower() for code in ("nosuchkey", "not found", "404", "no such")):
-            checks["minio"] = "healthy"
-        else:
-            checks["minio"] = "unreachable"
+        checks["minio"] = "healthy" if await object_store.health_check() else "unreachable"
+    except Exception:
+        checks["minio"] = "unreachable"
     healthy = [v for v in checks.values() if v == "healthy"]
-    if len(healthy) < 3:
+    if len(healthy) < 2:
         raise HTTPException(
             status_code=503,
             detail={"status": "not_ready", "checks": checks, "healthy_count": len(healthy)},

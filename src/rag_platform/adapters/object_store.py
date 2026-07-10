@@ -99,6 +99,14 @@ class ObjectStore:
             async with response["Body"] as stream:
                 return cast(bytes, await stream.read())
 
+    async def health_check(self) -> bool:
+        try:
+            async with self.client() as client:
+                await client.head_bucket(Bucket=self.settings.s3_clean_bucket)
+            return True
+        except Exception:
+            return False
+
     async def copy(
         self,
         source_bucket: str,
