@@ -219,8 +219,7 @@ class CacheStore:
             return None
         fields = result[2]
         decoded = {
-            fields[index].decode(): fields[index + 1].decode()
-            for index in range(0, len(fields), 2)
+            fields[index].decode(): fields[index + 1].decode() for index in range(0, len(fields), 2)
         }
         similarity = 1.0 - float(decoded["distance"])
         if similarity < self.settings.semantic_cache_threshold:

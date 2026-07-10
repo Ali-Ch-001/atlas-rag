@@ -27,7 +27,6 @@ async def ready(
     session: AsyncSession = Depends(get_session),
     cache: CacheStore = Depends(get_cache_store),
     vectors: VectorStore = Depends(get_vector_store),
-    object_store: ObjectStore = Depends(get_object_store),
 ) -> dict[str, object]:
     checks: dict[str, object] = {}
     try:
