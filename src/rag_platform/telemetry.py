@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import time
 
-from fastapi import FastAPI
-from fastapi import Request
+from fastapi import FastAPI, Request
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor

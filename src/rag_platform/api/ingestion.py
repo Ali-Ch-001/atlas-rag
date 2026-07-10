@@ -25,7 +25,9 @@ async def ingestion_summary(
     last_24h = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     active = await session.scalar(
-        select(func.count()).select_from(DocumentVersion).where(
+        select(func.count())
+        .select_from(DocumentVersion)
+        .where(
             DocumentVersion.tenant_id == auth.tenant_id,
             DocumentVersion.state == "ACTIVE",
         )
@@ -55,7 +57,9 @@ async def ingestion_summary(
         entry[str(state)] = count
 
     today_active = await session.scalar(
-        select(func.count()).select_from(DocumentVersion).where(
+        select(func.count())
+        .select_from(DocumentVersion)
+        .where(
             DocumentVersion.tenant_id == auth.tenant_id,
             DocumentVersion.state == "ACTIVE",
             DocumentVersion.updated_at >= last_24h,
@@ -63,7 +67,9 @@ async def ingestion_summary(
     )
 
     failed_24h = await session.scalar(
-        select(func.count()).select_from(DocumentVersion).where(
+        select(func.count())
+        .select_from(DocumentVersion)
+        .where(
             DocumentVersion.tenant_id == auth.tenant_id,
             DocumentVersion.state == "FAILED",
             DocumentVersion.updated_at >= last_24h,
@@ -91,12 +97,8 @@ async def ingestion_summary(
         "source": "live",
         "active_documents": active or 0,
         "document_states": {str(k): int(v) for k, v in states.items()},
-        "queue_depth": {
-            stage: entry.get("RUNNING", 0) for stage, entry in stages.items()
-        },
-        "retry_queue": {
-            stage: entry.get("FAILED", 0) for stage, entry in stages.items()
-        },
+        "queue_depth": {stage: entry.get("RUNNING", 0) for stage, entry in stages.items()},
+        "retry_queue": {stage: entry.get("FAILED", 0) for stage, entry in stages.items()},
         "today_processed": today_active or 0,
         "failed_24h": failed_24h or 0,
         "recent_failures": [

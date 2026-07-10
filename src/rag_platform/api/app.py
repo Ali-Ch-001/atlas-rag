@@ -7,8 +7,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import ORJSONResponse
-from fastapi.responses import Response
+from fastapi.responses import ORJSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from rag_platform.adapters.events import EventProducer, OutboxPublisher
