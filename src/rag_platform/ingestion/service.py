@@ -58,6 +58,7 @@ class IngestionService:
                 target_tokens=settings.chunk_target_tokens,
                 max_tokens=settings.chunk_max_tokens,
                 overlap_tokens=settings.chunk_overlap_tokens,
+                document_max_tokens=settings.chunker_document_max_tokens,
             )
         )
 

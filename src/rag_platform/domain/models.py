@@ -92,6 +92,8 @@ class SearchFilters(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     language: str | None = None
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=10, ge=1, le=100)
 
 
 class SearchRequest(BaseModel):
@@ -137,6 +139,9 @@ class SearchResponse(BaseModel):
     cache_hit: bool = False
     partial: bool = False
     timings_ms: dict[str, float] = Field(default_factory=dict)
+    total_count: int = 0
+    page: int = 1
+    page_size: int = 10
 
 
 class AgentRequest(BaseModel):

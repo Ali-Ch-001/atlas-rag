@@ -5,10 +5,13 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
+import structlog
 import tiktoken
 
 from rag_platform.domain.models import ChunkDraft, ExtractionMethod, SourceSpan
 from rag_platform.ingestion.schemas import ParsedDocument, TextBlock
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +19,7 @@ class ChunkerConfig:
     target_tokens: int
     max_tokens: int
     overlap_tokens: int
+    document_max_tokens: int = 50000
 
 
 def canonicalize_text(text: str) -> str:
@@ -90,9 +94,12 @@ class SemanticChunker:
         drafts: list[ChunkDraft] = []
         current: list[TextBlock] = []
         current_headings: tuple[str, ...] = ()
+        cumulative_tokens = 0
+        budget_exceeded = False
+        truncation_marker = "\n\n[TRUNCATED: document token budget exceeded]"
 
         def flush() -> None:
-            nonlocal current
+            nonlocal current, cumulative_tokens, budget_exceeded
             if not current:
                 return
             content = canonicalize_text("\n\n".join(block.text for block in current))
@@ -101,6 +108,11 @@ class SemanticChunker:
                 return
             canonical_input = "\n".join((*current_headings, content))
             digest = hashlib.sha256(canonical_input.encode()).hexdigest()
+            chunk_tokens = self.count_tokens(content)
+            if budget_exceeded:
+                content = content + truncation_marker
+                chunk_tokens = self.count_tokens(content)
+            cumulative_tokens += chunk_tokens
             drafts.append(
                 ChunkDraft(
                     section_title=current_headings[-1] if current_headings else None,
@@ -110,7 +122,7 @@ class SemanticChunker:
                     ordinal=len(drafts),
                     page_from=min(block.page for block in current),
                     page_to=max(block.page for block in current),
-                    token_count=self.count_tokens(content),
+                    token_count=chunk_tokens,
                     source_spans=[
                         SourceSpan(
                             page=block.page,
@@ -136,6 +148,8 @@ class SemanticChunker:
             current = overlap
 
         for block, headings in expanded:
+            if budget_exceeded:
+                break
             if current and headings != current_headings:
                 flush()
                 current = []
@@ -145,6 +159,17 @@ class SemanticChunker:
             )
             if current and projected > self.config.target_tokens:
                 flush()
+            if cumulative_tokens + self.count_tokens(block.text) > self.config.document_max_tokens:
+                logger.warning(
+                    "chunker_document_token_budget_exceeded",
+                    budget=self.config.document_max_tokens,
+                    cumulative_tokens=cumulative_tokens,
+                    remaining_blocks=len(expanded),
+                )
+                budget_exceeded = True
+                if current:
+                    flush()
+                break
             current.append(block)
             current_size = self.count_tokens("\n\n".join(item.text for item in current))
             if current_size >= self.config.max_tokens:

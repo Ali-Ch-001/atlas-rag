@@ -77,6 +77,10 @@ TENANT_MISMATCH = Counter(
     "Cross-tenant access attempts blocked",
     ("endpoint",),
 )
+DEAD_LETTER_MESSAGES = Counter(
+    "atlas_dead_letter_messages_total",
+    "Messages sent to dead-letter topics after exhausting retries",
+)
 
 
 def configure_prometheus(app: FastAPI) -> None:

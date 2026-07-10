@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from rag_platform.adapters.object_store import ObjectStore
+from rag_platform.api.audit import audit_delete, audit_document_access
 from rag_platform.config import Settings
 from rag_platform.db.models import Document, DocumentVersion, OutboxEvent
 from rag_platform.db.tenant import set_tenant_context
@@ -151,6 +152,12 @@ class DocumentService:
                 ]
             )
             await session.commit()
+            audit_document_access(
+                tenant_id=auth.tenant_id,
+                document_id=document_id,
+                user_id=auth.subject_id,
+                action="upload",
+            )
             return self._response(document, version)
         finally:
             spool.close()
@@ -171,7 +178,7 @@ class DocumentService:
         if corpus_id:
             conditions.append(Document.corpus_id == corpus_id)
         if query:
-            conditions.append(Document.title.ilike(f"%{query.replace('%', '')}%"))
+            conditions.append(Document.title.contains(query.replace("%", "")))
         latest_version_id = (
             select(DocumentVersion.version_id)
             .where(
@@ -265,6 +272,11 @@ class DocumentService:
             )
         )
         await session.commit()
+        audit_delete(
+            tenant_id=auth.tenant_id,
+            document_id=document_id,
+            user_id=auth.subject_id,
+        )
         return True
 
     @staticmethod

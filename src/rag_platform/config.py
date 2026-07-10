@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     reranker_provider: Literal["lexical", "cross_encoder"] = "lexical"
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     reranker_top_n: int = 5
+    reranker_term_weight: float = 0.7
+    reranker_title_weight: float = 0.2
+    reranker_rrf_weight: float = 0.1
+    reranker_rrf_scale: float = 100.0
 
     tavily_api_key: str | None = None
     tavily_base_url: str = "https://api.tavily.com"
@@ -86,6 +90,7 @@ class Settings(BaseSettings):
     chunk_target_tokens: int = 450
     chunk_max_tokens: int = 600
     chunk_overlap_tokens: int = 60
+    chunker_document_max_tokens: int = 50000
     ocr_enabled: bool = False
     ocr_dpi: int = 300
     ocr_language: str = "eng"
@@ -139,6 +144,14 @@ class Settings(BaseSettings):
             raise ValueError("CONTEXT_EVIDENCE_RATIO must be in (0, 0.70]")
         if not 0.0 <= self.mmr_lambda <= 1.0:
             raise ValueError("MMR_LAMBDA must be in [0, 1]")
+        reranker_sum = (
+            self.reranker_term_weight + self.reranker_title_weight + self.reranker_rrf_weight
+        )
+        if abs(reranker_sum - 1.0) > 0.01:
+            raise ValueError(
+                "RERANKER_TERM_WEIGHT + RERANKER_TITLE_WEIGHT + RERANKER_RRF_WEIGHT "
+                f"must sum to ~1.0 (got {reranker_sum})"
+            )
         return self
 
 

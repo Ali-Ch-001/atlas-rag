@@ -11,6 +11,7 @@ from fastapi.responses import ORJSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from rag_platform.adapters.events import EventProducer, OutboxPublisher
+from rag_platform.api.csrf_middleware import CsrfProtectionMiddleware
 from rag_platform.api.dependencies import (
     get_cache_store,
     get_graph_store,
@@ -25,6 +26,7 @@ from rag_platform.api.responses import router as responses_router
 from rag_platform.api.search import router as search_router
 from rag_platform.config import get_settings
 from rag_platform.logging import configure_logging
+from rag_platform.security.rate_limit import DEFAULT_ENDPOINT_LIMITS, RateLimitMiddleware
 from rag_platform.telemetry import configure_prometheus, configure_telemetry
 
 settings = get_settings()
@@ -82,6 +84,16 @@ app.add_middleware(
         "X-Tenant-ID",
         "X-Subject-ID",
     ],
+)
+app.add_middleware(
+    RateLimitMiddleware,
+    cache_store=get_cache_store(),
+    endpoint_limits=DEFAULT_ENDPOINT_LIMITS,
+    skip_paths=["/health", "/metrics"],
+)
+app.add_middleware(
+    CsrfProtectionMiddleware,
+    skip_paths=["/health", "/metrics", "/v1/responses"],
 )
 app.include_router(health_router)
 app.include_router(documents_router)

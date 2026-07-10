@@ -4,10 +4,12 @@ import asyncio
 import hashlib
 import hmac
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import structlog
+from opentelemetry import trace
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,7 @@ from rag_platform.adapters.cache import CacheStore
 from rag_platform.adapters.embeddings import EmbeddingProvider
 from rag_platform.adapters.graph_store import GraphHit
 from rag_platform.adapters.vector_store import DenseHit, VectorStore
+from rag_platform.api.audit import audit_search
 from rag_platform.config import Settings
 from rag_platform.db.models import Chunk, Document, RetrievalLog, RetrievalRequestLog
 from rag_platform.db.tenant import set_tenant_context
@@ -25,6 +28,7 @@ from rag_platform.security.auth import AuthContext
 from rag_platform.telemetry import CACHE_HITS, RETRIEVAL_DURATION, RETRIEVAL_REQUESTS
 
 logger = structlog.get_logger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +51,11 @@ class RetrievalService:
         self.vectors = vectors
         self.cache = cache
         self.reranker = reranker
+
+    def _span(self, name: str):  # type: ignore[no-untyped-def]
+        if self.settings.otel_enabled:
+            return trace.use_span(tracer.start_span(name), end_on_exit=True)
+        return nullcontext()
 
     async def search(
         self,
@@ -112,7 +121,9 @@ class RetrievalService:
         sparse_hits: list[SparseHit] = []
         dense_hits: list[DenseHit] = []
         partial = False
+        dense_start = time.perf_counter()
         results = await asyncio.gather(sparse_task, dense_task, return_exceptions=True)
+        dense_latency = (time.perf_counter() - dense_start) * 1000
         if isinstance(results[0], BaseException):
             partial = True
             logger.exception("sparse_retrieval_failed", exc_info=results[0])
@@ -125,9 +136,43 @@ class RetrievalService:
             dense_hits = results[1]
         if not sparse_hits and not dense_hits and partial:
             raise RuntimeError("All retrieval backends failed")
+        if self.settings.otel_enabled:
+            span = tracer.start_span("sparse_search")
+            span.set_attributes(
+                {
+                    "sparse_hit_count": len(sparse_hits),
+                    "sparse_failed": isinstance(results[0], BaseException),
+                }
+            )
+            span.end()
+            span = tracer.start_span("dense_search")
+            span.set_attributes(
+                {
+                    "dense_hit_count": len(dense_hits),
+                    "dense_latency_ms": dense_latency,
+                    "dense_failed": isinstance(results[1], BaseException),
+                }
+            )
+            span.end()
 
-        fused = self._rrf(sparse_hits, dense_hits, graph_hits)
-        chunks = await self._hydrate(session, auth, [item[0] for item in fused])
+        with self._span("rrf_fusion") as rrf_span:
+            fused = self._rrf(sparse_hits, dense_hits, graph_hits)
+            if rrf_span is not None:
+                rrf_span.set_attributes(
+                    {
+                        "sparse_count": len(sparse_hits),
+                        "dense_count": len(dense_hits),
+                        "graph_count": len(graph_hits) if graph_hits else 0,
+                        "fused_count": len(fused),
+                    }
+                )
+
+        chunk_ids = [item[0] for item in fused]
+        with self._span("candidate_hydration") as hydrate_span:
+            chunks = await self._hydrate(session, auth, chunk_ids)
+            if hydrate_span is not None:
+                hydrate_span.set_attribute("hydrated_count", len(chunks))
+
         chunk_map = {chunk.chunk_id: chunk for chunk in chunks}
         sparse_scores = {item.chunk_id: item.score for item in sparse_hits}
         dense_scores = {item.chunk_id: item.score for item in dense_hits}
@@ -144,19 +189,39 @@ class RetrievalService:
             for chunk_id, score in fused
             if chunk_id in chunk_map
         ]
-        reranked = await self.reranker.rerank(
-            request.query, candidates[: self.settings.fusion_candidates]
-        )
-        selected = select_mmr(
-            reranked,
-            min(request.top_k, self.settings.final_context_chunks),
-            self.settings.mmr_lambda,
-            lambda item: str(chunk_map[UUID(item.chunk_id)].document_id),
-        )
-        response_results = [
-            self._result(request.query, item, chunk_map[UUID(item.chunk_id)], rank)
-            for rank, item in enumerate(selected, start=1)
-        ]
+
+        with self._span("rerank") as rerank_span:
+            reranked = await self.reranker.rerank(request.query, candidates)
+            if rerank_span is not None:
+                rerank_span.set_attribute("reranker_candidate_count", len(reranked))
+
+        offset = (request.filters.page - 1) * request.filters.page_size
+        page_candidates = reranked[offset : offset + request.filters.page_size]
+
+        with self._span("mmr_select") as mmr_span:
+            selected = select_mmr(
+                page_candidates,
+                min(request.top_k, self.settings.final_context_chunks),
+                self.settings.mmr_lambda,
+                lambda item: str(chunk_map[UUID(item.chunk_id)].document_id),
+            )
+            if mmr_span is not None:
+                mmr_span.set_attributes(
+                    {
+                        "mmr_input_count": len(page_candidates),
+                        "mmr_selected_count": len(selected),
+                        "mmr_lambda": self.settings.mmr_lambda,
+                    }
+                )
+
+        with self._span("extractive_compress") as compress_span:
+            response_results = [
+                self._result(request.query, item, chunk_map[UUID(item.chunk_id)], rank)
+                for rank, item in enumerate(selected, start=1)
+            ]
+            if compress_span is not None:
+                compress_span.set_attribute("compressed_count", len(response_results))
+
         request_id = uuid4()
         total_latency_ms = round((time.perf_counter() - started) * 1000, 2)
         session.add_all(
@@ -192,11 +257,15 @@ class RetrievalService:
         outcome = "partial" if partial else "success"
         RETRIEVAL_REQUESTS.labels(outcome).inc()
         RETRIEVAL_DURATION.observe(total_latency_ms / 1000.0)
+        audit_search(auth.tenant_id, auth.subject_id, query_hash)
         response = SearchResponse(
             request_id=request_id,
             results=response_results,
             partial=partial,
             timings_ms={"total": total_latency_ms},
+            total_count=len(reranked),
+            page=request.filters.page,
+            page_size=request.filters.page_size,
         )
         payload = response.model_dump_json()
         await self.cache.set_exact(exact_key, payload)

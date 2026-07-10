@@ -16,6 +16,7 @@ from rag_platform.adapters.graph_store import GraphStore
 from rag_platform.adapters.llm import GenerationProvider
 from rag_platform.adapters.web_search import TavilySearch
 from rag_platform.agent.router import Route, SemanticRouter, calculate
+from rag_platform.api.audit import audit_search
 from rag_platform.config import Settings
 from rag_platform.domain.models import AgentRequest, SearchFilters, SearchRequest
 from rag_platform.security.auth import AuthContext
@@ -133,6 +134,11 @@ class AgentService:
                     top_k=5,
                 ),
                 graph_hits=graph_hits,
+            )
+            audit_search(
+                auth.tenant_id,
+                auth.subject_id,
+                hashlib.sha256(inspected.text.encode()).hexdigest(),
             )
             for result in search_response.results:
                 evidence.append(

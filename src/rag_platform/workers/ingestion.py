@@ -15,6 +15,7 @@ from rag_platform.config import get_settings
 from rag_platform.domain.models import IngestionEvent
 from rag_platform.ingestion.service import IngestionService
 from rag_platform.logging import configure_logging
+from rag_platform.telemetry import DEAD_LETTER_MESSAGES
 
 
 async def main() -> None:
@@ -70,6 +71,17 @@ async def main() -> None:
                             "error_code": type(exc).__name__,
                         },
                     )
+                    await retry_producer.send(
+                        "document.dead_letter.v1",
+                        str(event.version_id),
+                        {
+                            **event.model_dump(mode="json"),
+                            "event_type": "document.dead_letter.v1",
+                            "error_code": type(exc).__name__,
+                            "attempt": event.attempt,
+                        },
+                    )
+                    DEAD_LETTER_MESSAGES.inc()
             finally:
                 await consumer.commit()
     await retry_producer.stop()
