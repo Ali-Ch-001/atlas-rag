@@ -15,6 +15,7 @@ from rag_platform.config import Settings
 from rag_platform.db.models import EvaluationMetric, EvaluationRun
 from rag_platform.db.tenant import set_tenant_context
 from rag_platform.domain.models import SearchFilters, SearchRequest
+from rag_platform.evaluation import golden_dataset
 from rag_platform.evaluation.sample_dataset import GoldenCase
 from rag_platform.security.auth import AuthContext
 from rag_platform.services.retrieval import RetrievalService
@@ -98,6 +99,7 @@ class RunSummary:
     completed_at: str | None = None
     trends: list[dict[str, object]] = field(default_factory=list)
     release_gates: list[dict[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
 
 def _question_hash(question: str) -> str:
@@ -239,6 +241,8 @@ class EvaluationService:
             from rag_platform.evaluation.sample_dataset import SAMPLE_DATASET
 
             return SAMPLE_DATASET
+        if dataset_name == "golden-v1":
+            return golden_dataset.load_dataset()  # type: ignore[return-value]
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
     async def run_evaluation(
@@ -300,6 +304,9 @@ class EvaluationService:
         )
 
         trends = await self._build_trends(session, auth, result)
+        notes: list[str] = []
+        if not self._use_llm_eval:
+            notes.append("requires_openai")
         return RunSummary(
             run_id=result.run_id,
             dataset_name=result.dataset_name,
@@ -316,6 +323,7 @@ class EvaluationService:
             completed_at=result.completed_at,
             trends=trends,
             release_gates=self._build_release_gates(result),
+            notes=notes,
         )
 
     async def get_latest_results(
@@ -364,7 +372,12 @@ class EvaluationService:
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
 
         retrieved_texts = [r.content for r in results]
-        expected_texts = case.relevant_chunks
+        if hasattr(case, "relevant_chunks"):
+            expected_texts = case.relevant_chunks
+        elif hasattr(case, "expected_facts"):
+            expected_texts = list(case.expected_facts)
+        else:
+            expected_texts = []
 
         precision, recall = _token_overlap(retrieved_texts, expected_texts)
 
@@ -375,11 +388,11 @@ class EvaluationService:
                     generated_answer = r.content
                     break
 
-        faith_score, _ = _linear_faithfulness_score(generated_answer, retrieved_texts)
-        relevancy_score, _ = _answer_relevancy_score(case.question, generated_answer)
-        correctness_score, _ = _answer_correctness_score(generated_answer, case.reference_answer)
-
-        if self._use_llm_eval:
+        if not generated_answer and not retrieved_texts:
+            faith_score = -1.0
+            relevancy_score = -1.0
+            correctness_score = -1.0
+        elif self._use_llm_eval:
             faith_score = await self._llm_faithfulness(
                 case.question, retrieved_texts, generated_answer
             )
@@ -387,6 +400,10 @@ class EvaluationService:
             correctness_score = await self._llm_correctness(
                 case.question, generated_answer, case.reference_answer
             )
+        else:
+            faith_score = -1.0
+            relevancy_score = -1.0
+            correctness_score = -1.0
 
         return PerCaseMetrics(
             question_hash=_question_hash(case.question),
@@ -499,6 +516,7 @@ class EvaluationService:
             completed_at=result.completed_at,
             trends=trends,
             release_gates=self._build_release_gates(result),
+            notes=[],
         )
 
     async def _build_trends(
