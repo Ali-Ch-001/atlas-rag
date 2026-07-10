@@ -42,21 +42,25 @@ async def testcontainers_session(testcontainers_postgres):
     )
     engine = create_async_engine(url)
 
-    from rag_platform.db.base import Base
+    from rag_platform.db.models import Document, DocumentVersion, IngestionStage
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        for table in Base.metadata.tables:
-            if table in ("documents", "document_versions", "sections", "chunks"):
-                await conn.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
-                await conn.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
-                await conn.execute(
-                    text(
-                        f"CREATE POLICY {table}_tenant_policy ON {table} "
-                        f"USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid) "
-                        f"WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)"
-                    )
+        await conn.run_sync(Document.__table__.create)
+        await conn.run_sync(DocumentVersion.__table__.create)
+        await conn.run_sync(IngestionStage.__table__.create)
+
+    async with engine.begin() as conn:
+        for model in (Document, DocumentVersion, IngestionStage):
+            table_name = model.__tablename__
+            await conn.execute(text(f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY"))
+            await conn.execute(text(f"ALTER TABLE {table_name} FORCE ROW LEVEL SECURITY"))
+            await conn.execute(
+                text(
+                    f"CREATE POLICY {table_name}_tenant_policy ON {table_name} "
+                    f"USING (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid) "
+                    f"WITH CHECK (tenant_id = nullif(current_setting('app.tenant_id', true), '')::uuid)"
                 )
+            )
 
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as session:
