@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from typing import Any
 
 import structlog
@@ -16,6 +17,98 @@ import structlog
 from rag_platform.config import Settings
 
 logger = structlog.get_logger(__name__)
+
+
+class CircuitState(Enum):
+    CLOSED = auto()
+    OPEN = auto()
+    HALF_OPEN = auto()
+
+
+@dataclass
+class CircuitBreaker:
+    name: str
+    failure_threshold: int = 5
+    recovery_timeout: float = 30.0
+    success_threshold: int = 3
+    state: CircuitState = field(default=CircuitState.CLOSED, init=False)
+    consecutive_failures: int = field(default=0, init=False)
+    consecutive_successes: int = field(default=0, init=False)
+    last_failure_time: float = field(default=0.0, init=False)
+    last_state_change: float = field(default_factory=time.monotonic, init=False)
+    total_failures: int = field(default=0, init=False)
+    total_successes: int = field(default=0, init=False)
+
+    def before_call(self) -> bool:
+        if self.state == CircuitState.CLOSED:
+            return True
+        if self.state == CircuitState.OPEN:
+            if (time.monotonic() - self.last_failure_time) >= self.recovery_timeout:
+                self._transition(CircuitState.HALF_OPEN)
+                logger.warning("circuit_half_open", dependency=self.name)
+                return True
+            return False
+        if self.state == CircuitState.HALF_OPEN:
+            return True
+        return True
+
+    def on_success(self) -> None:
+        self.total_successes += 1
+        if self.state == CircuitState.HALF_OPEN:
+            self.consecutive_successes += 1
+            if self.consecutive_successes >= self.success_threshold:
+                self._transition(CircuitState.CLOSED)
+            return
+        self.consecutive_failures = 0
+
+    def on_failure(self) -> None:
+        self.consecutive_failures += 1
+        self.total_failures += 1
+        self.last_failure_time = time.monotonic()
+        if self.state == CircuitState.HALF_OPEN:
+            self.consecutive_failures = 1
+            self._transition(CircuitState.OPEN)
+        elif (
+            self.state == CircuitState.CLOSED
+            and self.consecutive_failures >= self.failure_threshold
+        ):
+            self._transition(CircuitState.OPEN)
+            logger.error(
+                "circuit_opened",
+                dependency=self.name,
+                consecutive_failures=self.consecutive_failures,
+            )
+
+    def _transition(self, new_state: CircuitState) -> None:
+        old_state = self.state
+        self.state = new_state
+        self.last_state_change = time.monotonic()
+        if new_state == CircuitState.CLOSED:
+            self.consecutive_failures = 0
+            self.consecutive_successes = 0
+            logger.info("circuit_closed", dependency=self.name)
+        elif new_state == CircuitState.OPEN:
+            self.consecutive_successes = 0
+        elif new_state == CircuitState.HALF_OPEN:
+            self.consecutive_successes = 0
+        logger.info(
+            "circuit_state_change",
+            dependency=self.name,
+            old_state=old_state.name,
+            new_state=new_state.name,
+        )
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "state": self.state.name,
+            "consecutive_failures": self.consecutive_failures,
+            "consecutive_successes": self.consecutive_successes,
+            "total_failures": self.total_failures,
+            "total_successes": self.total_successes,
+            "last_failure_time": self.last_failure_time,
+            "last_state_change": self.last_state_change,
+        }
 
 
 @dataclass
@@ -118,6 +211,25 @@ class BackpressureController:
 
         self._last_retrieval_p95_ms: float = 0.0
 
+        self.qdrant_circuit = CircuitBreaker(
+            name="qdrant",
+            failure_threshold=settings.circuit_failure_threshold,
+            recovery_timeout=settings.circuit_recovery_timeout_seconds,
+            success_threshold=settings.circuit_success_threshold,
+        )
+        self.redis_circuit = CircuitBreaker(
+            name="redis",
+            failure_threshold=settings.circuit_failure_threshold,
+            recovery_timeout=settings.circuit_recovery_timeout_seconds,
+            success_threshold=settings.circuit_success_threshold,
+        )
+        self.openai_circuit = CircuitBreaker(
+            name="openai",
+            failure_threshold=settings.circuit_failure_threshold,
+            recovery_timeout=settings.circuit_recovery_timeout_seconds,
+            success_threshold=settings.circuit_success_threshold,
+        )
+
     def update_retrieval_health(self, p95_ms: float) -> None:
         self._last_retrieval_p95_ms = p95_ms
         if p95_ms > self.settings.ingestion_backpressure_p95_threshold_ms:
@@ -159,4 +271,9 @@ class BackpressureController:
             "qdrant_write_rate": self.qdrant_write_bucket.rate_per_second,
             "ingestion_paused": not self.ingestion_paused.is_set(),
             "retrieval_p95_ms": self._last_retrieval_p95_ms,
+            "circuits": {
+                "qdrant": self.qdrant_circuit.snapshot(),
+                "redis": self.redis_circuit.snapshot(),
+                "openai": self.openai_circuit.snapshot(),
+            },
         }

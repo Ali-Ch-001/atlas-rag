@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from rag_platform.adapters.backpressure import BackpressureController
 from rag_platform.adapters.cache import CacheStore
 from rag_platform.adapters.graph_store import GraphStore
 from rag_platform.adapters.llm import GenerationProvider
@@ -34,6 +35,7 @@ class AgentService:
         generator: GenerationProvider,
         cache: CacheStore,
         graph: GraphStore | None = None,
+        backpressure: BackpressureController | None = None,
     ) -> None:
         self.settings = settings
         self.router = router
@@ -42,6 +44,7 @@ class AgentService:
         self.generator = generator
         self.cache = cache
         self.graph = graph
+        self.backpressure = backpressure
 
     async def stream(
         self,
@@ -201,7 +204,25 @@ class AgentService:
                 },
             )
         yield event("status", {"stage": "generating", "evidence_count": len(evidence)})
-        generated = await self.generator.generate(inspected.text, evidence)
+        if self.backpressure and not self.backpressure.openai_circuit.before_call():
+            yield event(
+                "error",
+                {
+                    "code": "CIRCUIT_OPEN",
+                    "detail": "Generation provider is temporarily unavailable",
+                    "retryable": True,
+                },
+            )
+            yield event("response.completed", {"outcome": "failed"})
+            return
+        try:
+            generated = await self.generator.generate(inspected.text, evidence)
+        except Exception as exc:
+            if self.backpressure:
+                self.backpressure.openai_circuit.on_failure()
+            raise exc
+        if self.backpressure:
+            self.backpressure.openai_circuit.on_success()
         answer = inspect_output(generated.text)
         allowed = {item["citation_id"] for item in evidence}
         referenced = set(re.findall(r"\[(C\d+)\]", answer))

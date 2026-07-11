@@ -33,6 +33,41 @@ jobs:
       - run: uv run pytest --cov=rag_platform --cov-report=term-missing
       - run: uvx pip-audit
 
+  e2e-retrieval:
+    name: E2E retrieval pipeline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [python]
+    services:
+      postgres:
+        image: postgres:16.9-alpine
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag-test-password
+          POSTGRES_DB: rag_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.9.8"
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - name: Run E2E retrieval pipeline tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://rag:rag-test-password@localhost:5432/rag_test
+        run: uv run pytest tests/e2e/ -v
+        # Future recall threshold gate: assert recall@5 >= 0.95 on golden dataset
+
   frontend:
     name: Frontend quality
     runs-on: ubuntu-24.04

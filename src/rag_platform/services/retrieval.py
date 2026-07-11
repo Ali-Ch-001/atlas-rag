@@ -13,6 +13,7 @@ from opentelemetry import trace
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from rag_platform.adapters.backpressure import BackpressureController
 from rag_platform.adapters.cache import CacheStore
 from rag_platform.adapters.embeddings import EmbeddingProvider
 from rag_platform.adapters.graph_store import GraphHit
@@ -45,12 +46,14 @@ class RetrievalService:
         vectors: VectorStore,
         cache: CacheStore,
         reranker: Reranker,
+        backpressure: BackpressureController | None = None,
     ) -> None:
         self.settings = settings
         self.embeddings = embeddings
         self.vectors = vectors
         self.cache = cache
         self.reranker = reranker
+        self.backpressure = backpressure
 
     def _span(self, name: str):  # type: ignore[no-untyped-def]
         if self.settings.otel_enabled:
@@ -80,44 +83,89 @@ class RetrievalService:
                 f"{graph_scope}|v1"
             ).encode()
         ).hexdigest()
-        if cached := await self.cache.get_exact(exact_key):
-            CACHE_HITS.labels("exact").inc()
-            response = SearchResponse.model_validate_json(cached)
-            return await self._record_cache_hit(
-                session, auth, response, query_hash, started, "exact"
-            )
+        cache_available = self.backpressure is None or self.backpressure.redis_circuit.before_call()
+        if cache_available:
+            try:
+                if cached := await self.cache.get_exact(exact_key):
+                    CACHE_HITS.labels("exact").inc()
+                    response = SearchResponse.model_validate_json(cached)
+                    if self.backpressure:
+                        self.backpressure.redis_circuit.on_success()
+                    return await self._record_cache_hit(
+                        session, auth, response, query_hash, started, "exact"
+                    )
+            except Exception as exc:
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_failure()
+                    logger.warning("redis_cache_exact_failed", error=str(exc))
+        else:
+            logger.warning("redis_circuit_open_skipping_cache")
 
-        query_vector = await self.cache.get_embedding(self.embeddings.model_name, query_hash)
+        query_vector = None
+        if cache_available:
+            try:
+                query_vector = await self.cache.get_embedding(
+                    self.embeddings.model_name, query_hash
+                )
+            except Exception:
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_failure()
         if query_vector is None:
             query_vector = await self.embeddings.embed_query(request.query)
-            await self.cache.set_embedding(self.embeddings.model_name, query_hash, query_vector)
+            if cache_available:
+                try:
+                    await self.cache.set_embedding(
+                        self.embeddings.model_name, query_hash, query_vector
+                    )
+                except Exception:
+                    if self.backpressure:
+                        self.backpressure.redis_circuit.on_failure()
 
-        semantic = await self.cache.get_semantic(
-            tenant_id=auth.tenant_id,
-            acl_fingerprint=acl_fingerprint,
-            scope_hash=scope_hash,
-            query_vector=query_vector,
-        )
-        if semantic:
-            CACHE_HITS.labels("semantic").inc()
-            response = SearchResponse.model_validate_json(semantic.payload)
-            response.timings_ms["semantic_cache_similarity"] = semantic.similarity
-            return await self._record_cache_hit(
-                session, auth, response, query_hash, started, "semantic"
-            )
+        if cache_available:
+            try:
+                semantic = await self.cache.get_semantic(
+                    tenant_id=auth.tenant_id,
+                    acl_fingerprint=acl_fingerprint,
+                    scope_hash=scope_hash,
+                    query_vector=query_vector,
+                )
+            except Exception:
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_failure()
+                semantic = None
+            if semantic:
+                CACHE_HITS.labels("semantic").inc()
+                response = SearchResponse.model_validate_json(semantic.payload)
+                response.timings_ms["semantic_cache_similarity"] = semantic.similarity
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_success()
+                return await self._record_cache_hit(
+                    session, auth, response, query_hash, started, "semantic"
+                )
 
         sparse_task = asyncio.create_task(self._sparse_search(session, auth, request))
-        dense_task = asyncio.create_task(
-            self.vectors.search(
-                query_vector,
-                auth,
-                request.filters.corpus_ids,
-                request.filters.document_types,
-                request.filters.date_from,
-                request.filters.date_to,
-                self.settings.dense_candidates,
-            )
+        dense_available = (
+            self.backpressure is None or self.backpressure.qdrant_circuit.before_call()
         )
+        if dense_available:
+            dense_task = asyncio.create_task(
+                self.vectors.search(
+                    query_vector,
+                    auth,
+                    request.filters.corpus_ids,
+                    request.filters.document_types,
+                    request.filters.date_from,
+                    request.filters.date_to,
+                    self.settings.dense_candidates,
+                )
+            )
+        else:
+            logger.warning("qdrant_circuit_open_skipping_dense")
+
+            async def _empty_dense() -> list[DenseHit]:
+                return []
+
+            dense_task = asyncio.create_task(_empty_dense())
         sparse_hits: list[SparseHit] = []
         dense_hits: list[DenseHit] = []
         partial = False
@@ -132,8 +180,12 @@ class RetrievalService:
         if isinstance(results[1], BaseException):
             partial = True
             logger.exception("dense_retrieval_failed", exc_info=results[1])
+            if self.backpressure:
+                self.backpressure.qdrant_circuit.on_failure()
         else:
             dense_hits = results[1]
+            if self.backpressure and dense_available:
+                self.backpressure.qdrant_circuit.on_success()
         if not sparse_hits and not dense_hits and partial:
             raise RuntimeError("All retrieval backends failed")
         if self.settings.otel_enabled:
@@ -268,14 +320,22 @@ class RetrievalService:
             page_size=request.filters.page_size,
         )
         payload = response.model_dump_json()
-        await self.cache.set_exact(exact_key, payload)
-        await self.cache.set_semantic(
-            tenant_id=auth.tenant_id,
-            acl_fingerprint=acl_fingerprint,
-            scope_hash=scope_hash,
-            query_vector=query_vector,
-            payload=payload,
-        )
+        if cache_available:
+            try:
+                await self.cache.set_exact(exact_key, payload)
+                await self.cache.set_semantic(
+                    tenant_id=auth.tenant_id,
+                    acl_fingerprint=acl_fingerprint,
+                    scope_hash=scope_hash,
+                    query_vector=query_vector,
+                    payload=payload,
+                )
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_success()
+            except Exception:
+                if self.backpressure:
+                    self.backpressure.redis_circuit.on_failure()
+                    logger.warning("redis_cache_write_failed")
         return response
 
     async def _record_cache_hit(

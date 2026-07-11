@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     qdrant_write_rate_per_second: float = 100.0
     qdrant_write_burst: int = 200
     ingestion_backpressure_p95_threshold_ms: float = 500.0
+    circuit_failure_threshold: int = 5
+    circuit_recovery_timeout_seconds: float = 30.0
+    circuit_success_threshold: int = 3
 
     sparse_candidates: int = 50
     dense_candidates: int = 50
